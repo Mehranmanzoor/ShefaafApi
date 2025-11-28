@@ -1,4 +1,4 @@
-﻿using ShefaafAPI.Models;
+using ShefaafAPI.Models;
 
 namespace ShefaafAPI.Services;
 
@@ -12,6 +12,7 @@ public interface ISqlService
     Task<bool> DeleteUser(string email);
     Task<bool> UpdatePass(Guid userId, string newPassword);
     Task<bool> UpdateUserRole(Guid userId, string role);
+    Task<bool> UpdateUserProfile(Guid userId, string username, string phoneNumber, string address, string city, string pinCode);
     
     // Product methods
     Task<List<Product>> GetAllProducts();
@@ -62,4 +63,14 @@ public interface ISqlService
     Task<List<Coupon>> GetAllCoupons();
     Task<bool> UpdateCouponUsage(Guid couponId);
     Task<bool> DeactivateCoupon(Guid couponId);
+
+    // Dashboard/Statistics methods
+    Task<DashboardStats> GetDashboardStatistics();
+    Task<int> GetTotalOrdersCount();
+    Task<decimal> GetTotalRevenue();
+    Task<int> GetTodayOrdersCount();
+    Task<decimal> GetTodayRevenue();
+    Task<int> GetMonthlyOrdersCount();
+    Task<decimal> GetMonthlyRevenue();
+    Task<Dictionary<string, int>> GetOrderStatusCounts();
 }

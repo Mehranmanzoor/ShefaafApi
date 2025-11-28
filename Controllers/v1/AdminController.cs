@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ShefaafAPI.Services;
 
@@ -11,42 +11,61 @@ public class AdminController : ControllerBase
 {
     private readonly ISqlService _sqlService;
     private readonly IImageService _imageService;
+    private readonly ILogger<AdminController> _logger;
 
-    public AdminController(ISqlService sqlService, IImageService imageService)
+    public AdminController(
+        ISqlService sqlService, 
+        IImageService imageService,
+        ILogger<AdminController> logger)
     {
         _sqlService = sqlService;
         _imageService = imageService;
+        _logger = logger;
     }
 
     [HttpGet("Users/All")]
-    public async Task<IActionResult> GetAllUsers()
+    public async Task<IActionResult> GetAllUsers(
+        [FromQuery] int page = 1, 
+        [FromQuery] int pageSize = 20)
     {
         try
         {
-            var users = await _sqlService.GetAllUsers();
+            if (page < 1) page = 1;
+            if (pageSize < 1 || pageSize > 100) pageSize = 20;
+
+            var allUsers = await _sqlService.GetAllUsers();
+            var totalCount = allUsers.Count;
             
-            var userList = users.Select(u => new
-            {
-                userId = u.UserId,
-                username = u.Username,
-                email = u.Email,
-                role = u.Role,
-                phoneNumber = u.PhoneNumber,
-                city = u.City,
-                isActive = u.IsActive,
-                createdAt = u.CreatedAt
-            }).ToList();
+            var users = allUsers
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(u => new
+                {
+                    userId = u.UserId,
+                    username = u.Username,
+                    email = u.Email,
+                    role = u.Role,
+                    phoneNumber = u.PhoneNumber,
+                    city = u.City,
+                    isActive = u.IsActive,
+                    createdAt = u.CreatedAt
+                })
+                .ToList();
 
             return Ok(new
             {
                 success = true,
-                count = userList.Count,
-                users = userList
+                page,
+                pageSize,
+                totalCount,
+                totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
+                users
             });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "Server Error", error = ex.Message });
+            _logger.LogError(ex, "Error fetching users - Page: {Page}, PageSize: {PageSize}", page, pageSize);
+            return StatusCode(500, new { success = false, message = "Server Error" });
         }
     }
 
@@ -55,6 +74,13 @@ public class AdminController : ControllerBase
     {
         try
         {
+            if (string.IsNullOrWhiteSpace(role))
+            {
+                return BadRequest(new { success = false, message = "Role is required" });
+            }
+
+            role = role.Trim();
+
             if (role != "Admin" && role != "Customer")
             {
                 return BadRequest(new
@@ -71,6 +97,8 @@ public class AdminController : ControllerBase
                 return NotFound(new { success = false, message = "User not found" });
             }
 
+            _logger.LogInformation("User {UserId} role updated to {Role}", userId, role);
+
             return Ok(new
             {
                 success = true,
@@ -79,7 +107,8 @@ public class AdminController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "Server Error", error = ex.Message });
+            _logger.LogError(ex, "Error updating user role for UserId: {UserId}", userId);
+            return StatusCode(500, new { success = false, message = "Server Error" });
         }
     }
 
@@ -93,7 +122,29 @@ public class AdminController : ControllerBase
                 return BadRequest(new { success = false, message = "No image file provided" });
             }
 
+            var allowedTypes = new[] { "image/jpeg", "image/jpg", "image/png", "image/webp" };
+            if (!allowedTypes.Contains(image.ContentType.ToLower()))
+            {
+                return BadRequest(new 
+                { 
+                    success = false, 
+                    message = "Invalid file type. Only JPEG, PNG, and WebP images are allowed" 
+                });
+            }
+
+            const long maxFileSize = 5 * 1024 * 1024;
+            if (image.Length > maxFileSize)
+            {
+                return BadRequest(new 
+                { 
+                    success = false, 
+                    message = "File too large. Maximum size is 5MB" 
+                });
+            }
+
             var imageUrl = await _imageService.UploadImage(image);
+
+            _logger.LogInformation("Product image uploaded successfully: {ImageUrl}", imageUrl);
 
             return Ok(new
             {
@@ -104,7 +155,8 @@ public class AdminController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "Server Error", error = ex.Message });
+            _logger.LogError(ex, "Error uploading product image");
+            return StatusCode(500, new { success = false, message = "Server Error" });
         }
     }
 
@@ -113,72 +165,44 @@ public class AdminController : ControllerBase
     {
         try
         {
-            var allOrders = await _sqlService.GetAllOrders();
-            var allProducts = await _sqlService.GetAllProducts();
-            var allUsers = await _sqlService.GetAllUsers();
-
-            var totalOrders = allOrders.Count;
-            var totalRevenue = allOrders.Sum(o => o.TotalAmount);
-            var totalProducts = allProducts.Count;
-            var totalUsers = allUsers.Count;
-            
-            var pendingOrders = allOrders.Count(o => o.Status == "Pending");
-            var processingOrders = allOrders.Count(o => o.Status == "Processing");
-            var shippedOrders = allOrders.Count(o => o.Status == "Shipped");
-            var deliveredOrders = allOrders.Count(o => o.Status == "Delivered");
-            var cancelledOrders = allOrders.Count(o => o.Status == "Cancelled");
-
-            var today = DateTime.UtcNow.Date;
-            var todayOrders = allOrders.Count(o => o.CreatedAt.Date == today);
-            var todayRevenue = allOrders.Where(o => o.CreatedAt.Date == today).Sum(o => o.TotalAmount);
-
-            var thisMonth = DateTime.UtcNow;
-            var monthlyOrders = allOrders.Count(o => o.CreatedAt.Month == thisMonth.Month && o.CreatedAt.Year == thisMonth.Year);
-            var monthlyRevenue = allOrders.Where(o => o.CreatedAt.Month == thisMonth.Month && o.CreatedAt.Year == thisMonth.Year).Sum(o => o.TotalAmount);
-
-            var lowStockProducts = allProducts.Where(p => p.Stock < 10).Select(p => new
-            {
-                productId = p.ProductId,
-                name = p.Name,
-                stock = p.Stock,
-                category = p.Category
-            }).ToList();
+            var stats = await _sqlService.GetDashboardStatistics();
 
             return Ok(new
             {
                 success = true,
                 overview = new
                 {
-                    totalOrders,
-                    totalRevenue,
-                    totalProducts,
-                    totalUsers,
-                    lowStockCount = lowStockProducts.Count
+                    totalOrders = stats.TotalOrders,
+                    totalRevenue = stats.TotalRevenue,
+                    totalProducts = stats.TotalProducts,
+                    totalUsers = stats.TotalUsers,
+                    lowStockCount = stats.LowStockCount
                 },
                 orderStatus = new
                 {
-                    pending = pendingOrders,
-                    processing = processingOrders,
-                    shipped = shippedOrders,
-                    delivered = deliveredOrders,
-                    cancelled = cancelledOrders
+                    pending = stats.PendingOrders,
+                    processing = stats.ProcessingOrders,
+                    shipped = stats.ShippedOrders,
+                    delivered = stats.DeliveredOrders,
+                    cancelled = stats.CancelledOrders
                 },
                 today = new
                 {
-                    orders = todayOrders,
-                    revenue = todayRevenue
+                    orders = stats.TodayOrders,
+                    revenue = stats.TodayRevenue
                 },
                 thisMonth = new
                 {
-                    orders = monthlyOrders,
-                    revenue = monthlyRevenue
+                    orders = stats.MonthlyOrders,
+                    revenue = stats.MonthlyRevenue
                 },
-                lowStockProducts
+                lowStockProducts = stats.LowStockProducts
             });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "Server Error", error = ex.Message });
+            _logger.LogError(ex, "Error fetching dashboard statistics");
+            return StatusCode(500, new { success = false, message = "Server Error" });
         }
     }
 
@@ -187,8 +211,16 @@ public class AdminController : ControllerBase
     {
         try
         {
+            if (limit < 1 || limit > 50)
+            {
+                limit = 10;
+            }
+
             var allOrders = await _sqlService.GetAllOrders();
-            var recentOrders = allOrders.Take(limit).ToList();
+            var recentOrders = allOrders
+                .OrderByDescending(o => o.CreatedAt)
+                .Take(limit)
+                .ToList();
 
             var orderList = new List<object>();
 
@@ -209,11 +241,17 @@ public class AdminController : ControllerBase
                 });
             }
 
-            return Ok(new { success = true, count = orderList.Count, orders = orderList });
+            return Ok(new 
+            { 
+                success = true, 
+                count = orderList.Count, 
+                orders = orderList 
+            });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "Server Error", error = ex.Message });
+            _logger.LogError(ex, "Error fetching recent orders with limit: {Limit}", limit);
+            return StatusCode(500, new { success = false, message = "Server Error" });
         }
     }
 
@@ -222,8 +260,16 @@ public class AdminController : ControllerBase
     {
         try
         {
+            if (threshold < 0 || threshold > 100)
+            {
+                threshold = 10;
+            }
+
             var allProducts = await _sqlService.GetAllProducts();
-            var lowStock = allProducts.Where(p => p.Stock <= threshold).ToList();
+            var lowStock = allProducts
+                .Where(p => p.Stock <= threshold)
+                .OrderBy(p => p.Stock)
+                .ToList();
 
             return Ok(new
             {
@@ -235,7 +281,8 @@ public class AdminController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "Server Error", error = ex.Message });
+            _logger.LogError(ex, "Error fetching low stock products with threshold: {Threshold}", threshold);
+            return StatusCode(500, new { success = false, message = "Server Error" });
         }
     }
 }

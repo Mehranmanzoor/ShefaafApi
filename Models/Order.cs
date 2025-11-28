@@ -39,4 +39,7 @@ public class Order
     
     [JsonIgnore]
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+
+
 }

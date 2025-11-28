@@ -1,20 +1,52 @@
-﻿using Microsoft.EntityFrameworkCore;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using System.Text;
 using ShefaafAPI.Data;
 using ShefaafAPI.Services;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Add services
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+// builder.Services.AddSwaggerGen();
 
 // Database
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+// Services
+builder.Services.AddScoped<ISqlService, SqlService>();
+builder.Services.AddScoped<ITokenService, TokenService>();
+builder.Services.AddHttpClient();
+builder.Services.AddScoped<IMailService, MailService>();
+builder.Services.AddScoped<IImageService, ImageService>(); // ✅ Cloudinary image service
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+    });
+
+// CORS
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        policy.WithOrigins(
+                "http://localhost:3000",
+                "http://localhost:3001",
+                "http://localhost:5173" // ✅ Vite default port (if you use Vite)
+            )
+            .AllowAnyMethod()
+            .AllowAnyHeader()
+            .AllowCredentials();
+    });
+});
+
 // JWT Authentication
-var jwtSecret = builder.Configuration["Jwt:Secret"];
-var jwtIssuer = builder.Configuration["Jwt:Issuer"];
-var jwtAudience = builder.Configuration["Jwt:Audience"];
+var jwtSettings = builder.Configuration.GetSection("Jwt");
+var secretKey = jwtSettings["Secret"];
 
 builder.Services.AddAuthentication(options =>
 {
@@ -29,47 +61,30 @@ builder.Services.AddAuthentication(options =>
         ValidateAudience = true,
         ValidateLifetime = true,
         ValidateIssuerSigningKey = true,
-        ValidIssuer = jwtIssuer,
-        ValidAudience = jwtAudience,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret!)),
-        ClockSkew = TimeSpan.Zero
+        ValidIssuer = jwtSettings["Issuer"],
+        ValidAudience = jwtSettings["Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey!))
     };
 });
 
+// Authorization Policies
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("AdminOnly", policy => policy.RequireClaim("Role", "Admin"));
-    options.AddPolicy("CustomerOnly", policy => policy.RequireClaim("Role", "Customer"));
-});
-
-// Services
-builder.Services.AddScoped<ISqlService, SqlService>();
-builder.Services.AddScoped<ITokenService, TokenService>();
-builder.Services.AddScoped<IMailService, MailService>();
-builder.Services.AddScoped<IImageService, ImageService>();
-
-// Controllers
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-// builder.Services.AddSwaggerGen();
-
-// CORS
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowAll", policy =>
-        policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+    options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
+    options.AddPolicy("CustomerOnly", policy => policy.RequireRole("Customer"));
 });
 
 var app = builder.Build();
 
+// Configure HTTP pipeline
 if (app.Environment.IsDevelopment())
 {
     // app.UseSwagger();
     // app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
-app.UseCors("AllowAll");
+// Use CORS - BEFORE Authentication!
+app.UseCors("AllowFrontend");
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -77,3 +92,4 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
+

@@ -1,70 +1,85 @@
-﻿using System.IdentityModel.Tokens.Jwt;
+﻿using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
-using Microsoft.IdentityModel.Tokens;
 
 namespace ShefaafAPI.Services;
 
 public class TokenService : ITokenService
 {
-    private readonly IConfiguration config;
+    private readonly IConfiguration _configuration;
 
-    public TokenService(IConfiguration config)
+    public TokenService(IConfiguration configuration)
     {
-        this.config = config;
+        _configuration = configuration;
     }
 
-    public string CreateToken(Guid userId, string email, string username, int expiryMinutes, string role = "Customer")
+    public string CreateToken(Guid userId, string email, string username, string role, string phoneNumber)
     {
+        var jwtSettings = _configuration.GetSection("Jwt");
+        var secretKey = jwtSettings["Secret"];
+        var issuer = jwtSettings["Issuer"];
+        var audience = jwtSettings["Audience"];
+
         var claims = new[]
         {
             new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
             new Claim(ClaimTypes.Email, email),
             new Claim(ClaimTypes.Name, username),
-            new Claim("Role", role)
+            new Claim(ClaimTypes.Role, role),
+            new Claim(ClaimTypes.MobilePhone, phoneNumber ?? ""),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(JwtRegisteredClaimNames.Sub, email)
         };
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["Jwt:Secret"]!));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey!));
+        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var token = new JwtSecurityToken(
-            issuer: config["Jwt:Issuer"],
-            audience: config["Jwt:Audience"],
+            issuer: issuer,
+            audience: audience,
             claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(expiryMinutes),
-            signingCredentials: creds
+            expires: DateTime.UtcNow.AddDays(7),
+            signingCredentials: credentials
         );
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
-    public Guid VerifyTokenAndGetId(string token)
+    public Guid? VerifyTokenAndGetId(string token)
     {
         try
         {
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["Jwt:Secret"]!));
+            var jwtSettings = _configuration.GetSection("Jwt");
+            var secretKey = jwtSettings["Secret"];
             var tokenHandler = new JwtSecurityTokenHandler();
+            var key = Encoding.UTF8.GetBytes(secretKey!);
 
-            tokenHandler.ValidateToken(token, new TokenValidationParameters
+            var validationParameters = new TokenValidationParameters
             {
-                ValidateIssuer = true,
-                ValidateAudience = true,
-                ValidateLifetime = true,
                 ValidateIssuerSigningKey = true,
-                ValidIssuer = config["Jwt:Issuer"],
-                ValidAudience = config["Jwt:Audience"],
-                IssuerSigningKey = key,
+                IssuerSigningKey = new SymmetricSecurityKey(key),
+                ValidateIssuer = true,
+                ValidIssuer = jwtSettings["Issuer"],
+                ValidateAudience = true,
+                ValidAudience = jwtSettings["Audience"],
+                ValidateLifetime = true,
                 ClockSkew = TimeSpan.Zero
-            }, out SecurityToken validatedToken);
+            };
 
-            var jwtToken = (JwtSecurityToken)validatedToken;
-            var userId = jwtToken.Claims.First(x => x.Type == ClaimTypes.NameIdentifier).Value;
+            var principal = tokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
+            var userIdClaim = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            
+            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+            {
+                return null;
+            }
 
-            return Guid.Parse(userId);
+            return userId;
         }
-        catch (Exception ex)
+        catch
         {
-            throw new Exception("Token has expired or is invalid", ex);
+            return null;
         }
     }
 }

@@ -1,36 +1,21 @@
-﻿using System.Net;
-using System.Net.Mail;
-
-namespace ShefaafAPI.Services;
+﻿namespace ShefaafAPI.Services;
 
 public class MailService : IMailService
 {
-    private readonly IConfiguration config;
+    private readonly ILogger<MailService> _logger;
 
-    public MailService(IConfiguration config)
+    public MailService(ILogger<MailService> logger)
     {
-        this.config = config;
+        _logger = logger;
     }
 
-    public async Task SendEmailAsync(string to, string subject, string body, bool isHtml)
+    public Task SendEmailAsync(string to, string subject, string body, bool isHtml = false)
     {
-        var smtpHost = config["Email:SmtpHost"];
-        var smtpPort = int.Parse(config["Email:SmtpPort"]!);
-        var smtpUser = config["Email:SmtpUser"];
-        var smtpPass = config["Email:SmtpPass"];
-        var fromEmail = config["Email:FromEmail"];
-
-        using var message = new MailMessage();
-        message.From = new MailAddress(fromEmail!);
-        message.To.Add(to);
-        message.Subject = subject;
-        message.Body = body;
-        message.IsBodyHtml = isHtml;
-
-        using var smtpClient = new SmtpClient(smtpHost, smtpPort);
-        smtpClient.Credentials = new NetworkCredential(smtpUser, smtpPass);
-        smtpClient.EnableSsl = true;
-
-        await smtpClient.SendMailAsync(message);
+        // For now, just log the email (you can implement SMTP later)
+        _logger.LogInformation($"Email to: {to} | Subject: {subject} | Body: {body}");
+        
+        // TODO: Implement actual email sending with SMTP
+        // For development, we'll just simulate success
+        return Task.CompletedTask;
     }
 }

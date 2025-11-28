@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using ShefaafAPI.Data;
 using ShefaafAPI.Models;
 
@@ -391,4 +391,131 @@ public class SqlService : ISqlService
         await db.SaveChangesAsync();
         return true;
     }
+
+    // ============================================
+    // NEW METHODS - Dashboard & User Profile
+    // ============================================
+
+    public async Task<bool> UpdateUserProfile(Guid userId, string username, string phoneNumber, string address, string city, string pinCode)
+    {
+        var user = await db.Users.FindAsync(userId);
+        
+        if (user == null)
+            return false;
+        
+        user.Username = username;
+        user.PhoneNumber = phoneNumber;
+        user.Address = address;
+        user.City = city;
+        user.PinCode = pinCode;
+        
+        await db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<DashboardStats> GetDashboardStatistics()
+    {
+        var stats = new DashboardStats();
+        
+        // Overview
+        stats.TotalOrders = await db.Orders.CountAsync();
+        stats.TotalRevenue = await db.Orders.SumAsync(o => (decimal?)o.TotalAmount) ?? 0;
+        stats.TotalProducts = await db.Products.CountAsync();
+        stats.TotalUsers = await db.Users.CountAsync();
+        stats.LowStockCount = await db.Products.CountAsync(p => p.Stock < 10);
+        
+        // Order Status
+        var statusCounts = await db.Orders
+            .GroupBy(o => o.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
+            .ToListAsync();
+        
+        stats.PendingOrders = statusCounts.FirstOrDefault(s => s.Status == "Pending")?.Count ?? 0;
+        stats.ProcessingOrders = statusCounts.FirstOrDefault(s => s.Status == "Processing")?.Count ?? 0;
+        stats.ShippedOrders = statusCounts.FirstOrDefault(s => s.Status == "Shipped")?.Count ?? 0;
+        stats.DeliveredOrders = statusCounts.FirstOrDefault(s => s.Status == "Delivered")?.Count ?? 0;
+        stats.CancelledOrders = statusCounts.FirstOrDefault(s => s.Status == "Cancelled")?.Count ?? 0;
+        
+        // Today
+        var today = DateTime.UtcNow.Date;
+        stats.TodayOrders = await db.Orders.CountAsync(o => o.CreatedAt.Date == today);
+        stats.TodayRevenue = await db.Orders
+            .Where(o => o.CreatedAt.Date == today)
+            .SumAsync(o => (decimal?)o.TotalAmount) ?? 0;
+        
+        // This Month
+        var now = DateTime.UtcNow;
+        stats.MonthlyOrders = await db.Orders
+            .CountAsync(o => o.CreatedAt.Month == now.Month && o.CreatedAt.Year == now.Year);
+        stats.MonthlyRevenue = await db.Orders
+            .Where(o => o.CreatedAt.Month == now.Month && o.CreatedAt.Year == now.Year)
+            .SumAsync(o => (decimal?)o.TotalAmount) ?? 0;
+        
+        // Low Stock Products
+        stats.LowStockProducts = await db.Products
+            .Where(p => p.Stock < 10)
+            .OrderBy(p => p.Stock)
+            .Take(10)
+            .Select(p => new LowStockProduct
+            {
+                ProductId = p.ProductId,
+                Name = p.Name,
+                Stock = p.Stock,
+                Category = p.Category
+            })
+            .ToListAsync();
+        
+        return stats;
+    }
+
+    public async Task<int> GetTotalOrdersCount()
+    {
+        return await db.Orders.CountAsync();
+    }
+
+    public async Task<decimal> GetTotalRevenue()
+    {
+        return await db.Orders.SumAsync(o => (decimal?)o.TotalAmount) ?? 0;
+    }
+
+    public async Task<int> GetTodayOrdersCount()
+    {
+        var today = DateTime.UtcNow.Date;
+        return await db.Orders.CountAsync(o => o.CreatedAt.Date == today);
+    }
+
+    public async Task<decimal> GetTodayRevenue()
+    {
+        var today = DateTime.UtcNow.Date;
+        return await db.Orders
+            .Where(o => o.CreatedAt.Date == today)
+            .SumAsync(o => (decimal?)o.TotalAmount) ?? 0;
+    }
+
+    public async Task<int> GetMonthlyOrdersCount()
+    {
+        var now = DateTime.UtcNow;
+        return await db.Orders
+            .CountAsync(o => o.CreatedAt.Month == now.Month && o.CreatedAt.Year == now.Year);
+    }
+
+    public async Task<decimal> GetMonthlyRevenue()
+    {
+        var now = DateTime.UtcNow;
+        return await db.Orders
+            .Where(o => o.CreatedAt.Month == now.Month && o.CreatedAt.Year == now.Year)
+            .SumAsync(o => (decimal?)o.TotalAmount) ?? 0;
+    }
+
+    public async Task<Dictionary<string, int>> GetOrderStatusCounts()
+    {
+        var statusCounts = await db.Orders
+            .GroupBy(o => o.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Status, x => x.Count);
+        
+        return statusCounts;
+    }
 }
+
+
